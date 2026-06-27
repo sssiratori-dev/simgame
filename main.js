@@ -5,8 +5,9 @@
  * 
  * 機能:
  * - 店舗管理システム
- * - 自動収入ロジック
+ * - 自動収入ロジック（マップボーナス対応）
  * - レベルアップ機能
+ * - マップシステム統合
  * - localStorage による自動保存
  */
 
@@ -85,7 +86,7 @@ const gameState = {
   },
 
   /**
-   * 店舗の現在の収入を計算
+   * 店舗の現在の基本収入を計算（マップボーナスなし）
    */
   getShopIncome(shop) {
     // レベルが上がるたびに収入が増加
@@ -93,12 +94,32 @@ const gameState = {
   },
 
   /**
-   * 秒間の総収入を計算
+   * 店舗の実際の収入を計算（マップボーナス適用）
+   */
+  getShopActualIncome(shop) {
+    let income = this.getShopIncome(shop);
+
+    // マップボーナスを適用（中央マスにいる場合は1.2倍）
+    if (mapModule && mapModule.grid) {
+      const placedIndex = mapModule.findPlacedShop(shop.id);
+      if (placedIndex !== -1) {
+        const coords = mapModule.getCoordsFromIndex(placedIndex);
+        if (mapModule.isCenterCell(coords.x, coords.y)) {
+          income = Math.floor(income * 1.2);
+        }
+      }
+    }
+
+    return income;
+  },
+
+  /**
+   * 秒間の総収入を計算（マップボーナス適用）
    */
   getTotalIncomePerSecond() {
     return this.shops
       .filter((shop) => shop.owned)
-      .reduce((sum, shop) => sum + this.getShopIncome(shop), 0);
+      .reduce((sum, shop) => sum + this.getShopActualIncome(shop), 0);
   },
 
   /**
@@ -159,7 +180,7 @@ const gameState = {
    * 毎フレーム実行 (1秒ごと)
    */
   update(deltaTime) {
-    // 自動収入を加算
+    // 自動収入を加算（マップボーナス適用）
     const incomePerSecond = this.getTotalIncomePerSecond();
     this.money += incomePerSecond * deltaTime;
 
@@ -178,6 +199,7 @@ const gameState = {
       money: this.money,
       totalTime: this.totalTime,
       shops: this.shops,
+      map: mapModule ? mapModule.getData() : null,
     };
     localStorage.setItem('simgame_save', JSON.stringify(saveData));
   },
@@ -194,6 +216,12 @@ const gameState = {
       this.money = data.money;
       this.totalTime = data.totalTime;
       this.shops = data.shops;
+
+      // マップデータを復元
+      if (mapModule && data.map) {
+        mapModule.load(data.map);
+      }
+
       return true;
     } catch (e) {
       console.error('Failed to load save data:', e);
@@ -216,8 +244,18 @@ const gameState = {
         shop.level = 0;
         shop.owned = false;
       });
+
+      // マップもリセット
+      if (mapModule) {
+        mapModule.grid = new Array(9).fill(null);
+        mapModule.selectedShopId = null;
+      }
+
       localStorage.removeItem('simgame_save');
       this.render();
+      if (mapModule) {
+        mapModule.render();
+      }
     }
   },
 
@@ -231,6 +269,9 @@ const gameState = {
   render() {
     this.updateInfoPanel();
     this.updateShopsContainer();
+    if (mapModule) {
+      mapModule.renderAvailableShops();
+    }
   },
 
   /**
@@ -253,6 +294,8 @@ const gameState = {
    */
   updateShopsContainer() {
     const container = document.getElementById('shopsContainer');
+    if (!container) return;
+
     container.innerHTML = '';
 
     this.shops.forEach((shop) => {
@@ -261,6 +304,7 @@ const gameState = {
 
       const cost = this.getShopCost(shop);
       const income = this.getShopIncome(shop);
+      const actualIncome = this.getShopActualIncome(shop);
       const canAfford = this.money >= cost;
 
       let statusText = '未購入';
@@ -291,10 +335,17 @@ const gameState = {
         `;
       }
 
+      // マップボーナスがある場合は表示
+      const bonusHTML =
+        shop.owned && actualIncome !== income
+          ? `<p><strong>マップボーナス中:</strong> ${income}円 → ${actualIncome}円</p>`
+          : '';
+
       card.innerHTML = `
         <h3>${shop.name}</h3>
         <p>状態: <strong>${statusText}</strong></p>
-        <p>毎秒の収入: <strong>${income}円</strong></p>
+        <p>毎秒の収入: <strong>${actualIncome}円</strong></p>
+        ${bonusHTML}
         <p>説明: ${this.getShopDescription(shop.id)}</p>
         ${actionButtonHTML}
       `;
@@ -345,10 +396,47 @@ function gameLoop() {
 }
 
 // ========================================
+// タブ切り替え機能
+// ========================================
+
+function setupTabSwitching() {
+  const tabButtons = document.querySelectorAll('.tab-button');
+  const tabContents = document.querySelectorAll('.tab-content');
+
+  tabButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const tabName = button.dataset.tab;
+
+      // すべてのタブボタンを非アクティブに
+      tabButtons.forEach((btn) => btn.classList.remove('active'));
+      // すべてのタブコンテンツを非表示に
+      tabContents.forEach((content) => content.classList.remove('active'));
+
+      // 選択されたタブをアクティブに
+      button.classList.add('active');
+      const selectedTab = document.getElementById(`${tabName}-tab`);
+      if (selectedTab) {
+        selectedTab.classList.add('active');
+
+        // マップタブが表示された場合は、マップを再レンダリング
+        if (tabName === 'map' && mapModule) {
+          mapModule.render();
+        }
+      }
+    });
+  });
+}
+
+// ========================================
 // 初期化
 // ========================================
 
 document.addEventListener('DOMContentLoaded', () => {
+  // マップモジュールを初期化
+  if (mapModule) {
+    mapModule.init();
+  }
+
   // セーブデータを読み込む
   if (!gameState.load()) {
     console.log('新しいゲームを開始します');
@@ -356,6 +444,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // UI を初期化
   gameState.render();
+
+  // タブ切り替え機能を初期化
+  setupTabSwitching();
 
   // ゲームループを開始
   gameLoop();
