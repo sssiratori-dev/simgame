@@ -21,6 +21,9 @@ const gameState = {
   // ゲーム時間
   totalTime: 0,
 
+  // 累計収益（統計用）
+  totalEarned: 0,
+
   // 店舗データ
   shops: [
     {
@@ -94,23 +97,13 @@ const gameState = {
   },
 
   /**
-   * 店舗の実際の収入を計算（マップボーナス適用）
+   * 店舗の実際の収入を計算（地形・シナジー・イベントボーナス適用）
    */
   getShopActualIncome(shop) {
-    let income = this.getShopIncome(shop);
-
-    // マップボーナスを適用（中央マスにいる場合は1.2倍）
-    if (mapModule && mapModule.grid) {
-      const placedIndex = mapModule.findPlacedShop(shop.id);
-      if (placedIndex !== -1) {
-        const coords = mapModule.getCoordsFromIndex(placedIndex);
-        if (mapModule.isCenterCell(coords.x, coords.y)) {
-          income = Math.floor(income * 1.2);
-        }
-      }
-    }
-
-    return income;
+    const base = this.getShopIncome(shop);
+    if (!mapModule || !mapModule.grid) return base;
+    const multiplier = mapModule.getTotalMultiplier(shop.id);
+    return Math.floor(base * multiplier);
   },
 
   /**
@@ -152,6 +145,7 @@ const gameState = {
 
     this.save();
     this.render();
+    showToast(`✨ ${shop.name} を購入！`, 'success', `収入 +${this.getShopIncome(shop).toLocaleString('ja-JP')}円/秒`);
     return true;
   },
 
@@ -173,18 +167,25 @@ const gameState = {
 
     this.save();
     this.render();
+    showToast(`⬆️ ${shop.name} Lv.${shop.level}！`, 'info', `収入 +${this.getShopIncome(shop).toLocaleString('ja-JP')}円/秒`);
     return true;
   },
 
   /**
-   * 毎フレーム実行 (1秒ごと)
+   * 毎フレーム実行
    */
   update(deltaTime) {
-    // 自動収入を加算（マップボーナス適用）
     const incomePerSecond = this.getTotalIncomePerSecond();
-    this.money += incomePerSecond * deltaTime;
+    const earned = incomePerSecond * deltaTime;
+    this.money       += earned;
+    this.totalEarned += earned;
+    this.totalTime   += deltaTime;
 
-    this.totalTime += deltaTime;
+    // 1秒ごとにフローティング収入を表示
+    if (incomePerSecond > 0 &&
+        Math.floor(this.totalTime) > Math.floor(this.totalTime - deltaTime)) {
+      spawnFloatingIncome(Math.floor(incomePerSecond));
+    }
   },
 
   // ========================================
@@ -198,6 +199,7 @@ const gameState = {
     const saveData = {
       money: this.money,
       totalTime: this.totalTime,
+      totalEarned: this.totalEarned,
       shops: this.shops,
       map: mapModule ? mapModule.getData() : null,
     };
@@ -213,9 +215,10 @@ const gameState = {
 
     try {
       const data = JSON.parse(saveData);
-      this.money = data.money;
-      this.totalTime = data.totalTime;
-      this.shops = data.shops;
+      this.money       = data.money;
+      this.totalTime   = data.totalTime;
+      this.totalEarned = data.totalEarned ?? 0;
+      this.shops       = data.shops;
 
       // マップデータを復元
       if (mapModule && data.map) {
@@ -238,8 +241,9 @@ const gameState = {
         'ゲームをリセットしてもよろしいですか？\nセーブデータが削除されます。'
       )
     ) {
-      this.money = 1000;
-      this.totalTime = 0;
+      this.money       = 1000;
+      this.totalTime   = 0;
+      this.totalEarned = 0;
       this.shops.forEach((shop) => {
         shop.level = 0;
         shop.owned = false;
@@ -247,8 +251,12 @@ const gameState = {
 
       // マップもリセット
       if (mapModule) {
-        mapModule.grid = new Array(9).fill(null);
+        mapModule.grid          = new Array(16).fill(null);
         mapModule.selectedShopId = null;
+        mapModule.unlockedCells  = [];
+        mapModule.activeEvents   = [];
+        mapModule.eventTimer     = 0;
+        mapModule.nextEventIn    = 45;
       }
 
       localStorage.removeItem('simgame_save');
@@ -269,6 +277,7 @@ const gameState = {
   render() {
     this.updateInfoPanel();
     this.updateShopsContainer();
+    this.updateStatsPanel();
     if (mapModule) {
       mapModule.renderAvailableShops();
     }
@@ -335,23 +344,70 @@ const gameState = {
         `;
       }
 
-      // マップボーナスがある場合は表示
+      // 配置ボーナス表示
       const bonusHTML =
         shop.owned && actualIncome !== income
-          ? `<p><strong>マップボーナス中:</strong> ${income}円 → ${actualIncome}円</p>`
+          ? `<p><strong>配置ボーナス:</strong> ${income.toLocaleString('ja-JP')}円 → ${actualIncome.toLocaleString('ja-JP')}円</p>`
           : '';
+
+      // 進捗バー（次のアクションまでの資金充足率）
+      const progressPct = Math.min(100, Math.round((this.money / cost) * 100));
+      const progressBarHTML = `
+        <div class="shop-progress-wrap">
+          <div class="shop-progress-label">
+            <span>${shop.owned ? 'Lv.Up' : '購入'}まで</span>
+            <span>${progressPct >= 100 ? '✅ 可能' : progressPct + '%'}</span>
+          </div>
+          <div class="shop-progress-track">
+            <div class="shop-progress-bar" style="width: ${progressPct}%"></div>
+          </div>
+        </div>`;
 
       card.innerHTML = `
         <h3>${shop.name}</h3>
         <p>状態: <strong>${statusText}</strong></p>
-        <p>毎秒の収入: <strong>${actualIncome}円</strong></p>
+        <p>毎秒の収入: <strong>${actualIncome.toLocaleString('ja-JP')}円</strong></p>
         ${bonusHTML}
+        ${progressBarHTML}
         <p>説明: ${this.getShopDescription(shop.id)}</p>
         ${actionButtonHTML}
       `;
 
       container.appendChild(card);
     });
+  },
+
+  /**
+   * 統計パネルを更新
+   */
+  updateStatsPanel() {
+    const totalEarnedEl   = document.getElementById('totalEarnedDisplay');
+    const playtimeEl      = document.getElementById('playtimeDisplay');
+    const topShopEl       = document.getElementById('topShopDisplay');
+    const unlockedCellsEl = document.getElementById('unlockedCellsDisplay');
+
+    if (totalEarnedEl) {
+      totalEarnedEl.textContent = Math.floor(this.totalEarned).toLocaleString('ja-JP') + '円';
+    }
+    if (playtimeEl) {
+      const m = Math.floor(this.totalTime / 60);
+      const s = Math.floor(this.totalTime % 60);
+      playtimeEl.textContent = m > 0 ? `${m}分${s}秒` : `${s}秒`;
+    }
+    if (topShopEl) {
+      const owned = this.shops.filter((s) => s.owned);
+      if (owned.length > 0) {
+        const top = owned.reduce((a, b) =>
+          this.getShopActualIncome(a) >= this.getShopActualIncome(b) ? a : b
+        );
+        topShopEl.textContent = top.name;
+      } else {
+        topShopEl.textContent = '--';
+      }
+    }
+    if (unlockedCellsEl && mapModule) {
+      unlockedCellsEl.textContent = `${mapModule.unlockedCells.length} / 4`;
+    }
   },
 
   /**
@@ -371,6 +427,54 @@ const gameState = {
 };
 
 // ========================================
+// ユーティリティ関数
+// ========================================
+
+/**
+ * トースト通知を表示
+ */
+function showToast(title, type = 'info', sub = '') {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = `toast toast-${type}`;
+  div.innerHTML = `
+    <div class="toast-title">${title}</div>
+    ${sub ? `<div class="toast-sub">${sub}</div>` : ''}
+  `;
+  container.appendChild(div);
+  setTimeout(() => {
+    div.style.animation = 'toastOut 0.3s ease-in forwards';
+    setTimeout(() => div.remove(), 350);
+  }, 3500);
+}
+
+/**
+ * フローティング収入テキストを表示
+ */
+function spawnFloatingIncome(amount) {
+  if (amount <= 0) return;
+  const el = document.getElementById('moneyDisplay');
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  const div = document.createElement('div');
+  div.className = 'floating-income';
+  div.textContent = `+${amount.toLocaleString('ja-JP')}円`;
+  div.style.left = `${rect.left + rect.width / 2 + (Math.random() - 0.5) * 40}px`;
+  div.style.top  = `${rect.top - 10}px`;
+  document.body.appendChild(div);
+  setTimeout(() => div.remove(), 1700);
+}
+
+/**
+ * 統計パネルの折りたたみ切り替え
+ */
+function toggleStats() {
+  const panel = document.getElementById('statsPanel');
+  if (panel) panel.classList.toggle('collapsed');
+}
+
+// ========================================
 // ゲームループ
 // ========================================
 
@@ -378,14 +482,20 @@ let lastTime = Date.now();
 
 function gameLoop() {
   const now = Date.now();
-  const deltaTime = (now - lastTime) / 1000; // ミリ秒から秒に変換
+  const deltaTime = (now - lastTime) / 1000;
   lastTime = now;
 
   // ゲーム状態を更新
   gameState.update(deltaTime);
 
-  // 情報パネルを更新（毎フレーム）
+  // マップイベントタイマーを更新
+  if (mapModule) {
+    mapModule.update(deltaTime);
+  }
+
+  // 情報パネルと統計を更新（毎フレーム）
   gameState.updateInfoPanel();
+  gameState.updateStatsPanel();
 
   // 定期的にセーブ (3秒ごと)
   if (Math.floor(gameState.totalTime) % 3 === 0) {
