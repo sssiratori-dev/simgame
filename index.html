@@ -3,32 +3,54 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>2D Demo</title>
-  <style>
-    body {
-      margin: 0;
-      background: #111;
-      color: #eee;
-      font-family: Arial, sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      min-height: 100vh;
-    }
-    #info {
-      margin: 16px 0 0;
-      text-align: center;
-    }
-    canvas {
-      border: 2px solid #444;
-      background: #000;
-      display: block;
-    }
-  </style>
+  <title>経営シミュレーション - SIMgame</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <canvas id="gameCanvas" width="800" height="600"></canvas>
-  <div id="info">矢印キーでプレイヤーを移動。スペースキーでリセット。</div>
+  <!-- ヘッダー -->
+  <header class="header">
+    <h1>🏪 経営シミュレーション</h1>
+    <p>店舗を購入・拡大して、ビジネス帝国を築こう！</p>
+  </header>
+
+  <!-- 情報パネル -->
+  <div class="info-panel">
+    <div class="info-item">
+      <span class="label">💰 所持金:</span>
+      <span class="value" id="moneyDisplay">1,000</span>
+      <span class="unit">円</span>
+    </div>
+    <div class="info-item">
+      <span class="label">🏢 店舗数:</span>
+      <span class="value" id="shopCountDisplay">0</span>
+      <span class="unit">軒</span>
+    </div>
+    <div class="info-item">
+      <span class="label">💸 毎秒収入:</span>
+      <span class="value" id="incomePerSecDisplay">0</span>
+      <span class="unit">円/秒</span>
+    </div>
+  </div>
+
+  <!-- メインコンテンツ -->
+  <main class="main-content">
+    <h2>🛍️ 利用可能な店舗</h2>
+    <div class="shops-container" id="shopsContainer">
+      <!-- JavaScriptで動的に生成 -->
+    </div>
+  </main>
+
+  <!-- フッター -->
+  <footer class="footer">
+    <p>💾 ゲームは自動保存されています（3秒ごと）</p>
+    <p>
+      <button class="btn btn-reset" onclick="gameState.reset()">
+        🔄 ゲームをリセット
+      </button>
+    </p>
+  </footer>
+
+  <!-- メインスクリプト -->
   <script src="main.js"></script>
 </body>
 </html>
