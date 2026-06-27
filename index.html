@@ -32,11 +32,51 @@
     </div>
   </div>
 
+  <!-- タブメニュー -->
+  <div class="tabs-container">
+    <button class="tab-button active" data-tab="shops">🛍️ ショップ一覧</button>
+    <button class="tab-button" data-tab="map">🗺️ マップ配置</button>
+  </div>
+
   <!-- メインコンテンツ -->
   <main class="main-content">
-    <h2>🛍️ 利用可能な店舗</h2>
-    <div class="shops-container" id="shopsContainer">
-      <!-- JavaScriptで動的に生成 -->
+    <!-- ショップタブ -->
+    <div class="tab-content active" id="shops-tab">
+      <h2>🛍️ 利用可能な店舗</h2>
+      <div class="shops-container" id="shopsContainer">
+        <!-- JavaScriptで動的に生成 -->
+      </div>
+    </div>
+
+    <!-- マップタブ -->
+    <div class="tab-content" id="map-tab">
+      <h2>🗺️ マップに店舗を配置</h2>
+      <div class="map-section">
+        <!-- 配置待ちの店舗リスト -->
+        <div class="map-sidebar">
+          <h3>配置可能な店舗</h3>
+          <div class="available-shops" id="availableShops">
+            <!-- JavaScriptで動的に生成 -->
+          </div>
+        </div>
+
+        <!-- マップグリッド -->
+        <div class="map-container">
+          <div class="map-grid" id="mapGrid">
+            <!-- 3x3 グリッドセルを JavaScriptで生成 -->
+          </div>
+          <p class="map-hint">
+            📌 <strong>ヒント</strong>: 中央マス（⭐）に配置した店舗は収入が1.2倍になります！
+          </p>
+        </div>
+      </div>
+
+      <!-- マップコントロール -->
+      <div class="map-controls">
+        <button class="btn btn-reset" onclick="mapModule.clearMap()">
+          🗑️ マップをクリア
+        </button>
+      </div>
     </div>
   </main>
 
@@ -50,7 +90,8 @@
     </p>
   </footer>
 
-  <!-- メインスクリプト -->
+  <!-- スクリプト読み込み -->
+  <script src="Script/map.js"></script>
   <script src="main.js"></script>
 </body>
 </html>
