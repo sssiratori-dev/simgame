@@ -1,422 +1,163 @@
 /**
  * ========================================
- * マップシステムモジュール
+ * マップモジュール
  * ========================================
- * 
- * 機能:
- * - 3x3グリッドマップの管理
- * - 店舗の配置・移動ロジック
- * - ドラッグ&ドロップおよびクリック配置UI
- * - マップボーナス計算（中央マスで1.2倍）
+ * 3x3マップに保有店舗を配置し、中央マスで1.2倍ボーナスを得る
  */
 
 const mapModule = {
-  // ========================================
-  // マップ状態
-  // ========================================
-  
-  /**
-   * マップグリッド (3x3)
-   * null = 空き、shopId = 配置された店舗ID
-   */
-  grid: [
-    null, null, null,
-    null, null, null,
-    null, null, null,
-  ],
-
-  /**
-   * 選択中の店舗ID（クリック配置用）
-   */
+  gridSize: 3,
+  grid: new Array(9).fill(null), // 各セルに shopId or null
   selectedShopId: null,
 
-  /**
-   * ドラッグ中の店舗ID
-   */
-  draggedShopId: null,
-
-  // ========================================
-  // 初期化
-  // ========================================
-
-  /**
-   * マップモジュールを初期化
-   */
   init() {
-    this.grid = new Array(9).fill(null);
-    this.selectedShopId = null;
     this.render();
-    this.setupEventListeners();
+    this.renderAvailableShops();
   },
 
-  /**
-   * 保存済みマップデータを復元
-   */
-  load(mapData) {
-    if (Array.isArray(mapData) && mapData.length === 9) {
-      this.grid = [...mapData];
-    }
-  },
-
-  /**
-   * マップデータを取得（保存用）
-   */
-  getData() {
-    return [...this.grid];
-  },
-
-  // ========================================
-  // グリッド操作
-  // ========================================
-
-  /**
-   * グリッドの座標からインデックスを取得
-   * @param {number} x - X座標 (0-2)
-   * @param {number} y - Y座標 (0-2)
-   * @returns {number} インデックス (0-8)
-   */
+  // -------- 座標/セルユーティリティ --------
   getIndexFromCoords(x, y) {
-    if (x < 0 || x > 2 || y < 0 || y > 2) return -1;
-    return y * 3 + x;
+    return y * this.gridSize + x;
   },
 
-  /**
-   * インデックスから座標を取得
-   * @param {number} index - インデックス (0-8)
-   * @returns {{x: number, y: number}}
-   */
   getCoordsFromIndex(index) {
     return {
-      x: index % 3,
-      y: Math.floor(index / 3),
+      x: index % this.gridSize,
+      y: Math.floor(index / this.gridSize),
     };
   },
 
-  /**
-   * 指定座標が中央マスか判定
-   * @param {number} x
-   * @param {number} y
-   * @returns {boolean}
-   */
   isCenterCell(x, y) {
-    return x === 1 && y === 1;
+    return x === 1 && y === 1; // 3x3の中央
   },
 
-  /**
-   * マスが空いているか判定
-   * @param {number} index
-   * @returns {boolean}
-   */
-  isEmptyCell(index) {
-    return this.grid[index] === null;
-  },
-
-  /**
-   * マスに店舗が配置されているか判定（別の店舗）
-   * @param {number} index
-   * @param {number} shopIdToExclude - 除外する店舗ID
-   * @returns {boolean}
-   */
-  hasDifferentShop(index, shopIdToExclude) {
-    const cellShopId = this.grid[index];
-    return cellShopId !== null && cellShopId !== shopIdToExclude;
-  },
-
-  /**
-   * グリッドに既に配置されている店舗IDを取得
-   * @param {number} shopId
-   * @returns {number|null} インデックス、配置されていない場合はnull
-   */
   findPlacedShop(shopId) {
-    return this.grid.indexOf(shopId);
+    return this.grid.findIndex((id) => id === shopId);
   },
 
-  /**
-   * 店舗をグリッドに配置
-   * @param {number} shopId
-   * @param {number} cellIndex
-   * @returns {boolean} 成功したか
-   */
-  placeShop(shopId, cellIndex) {
-    // 既に配置されている場合は移動
-    const existingIndex = this.findPlacedShop(shopId);
-    if (existingIndex !== -1) {
-      this.grid[existingIndex] = null;
-    }
-
-    // 新しい位置に配置
-    if (this.isEmptyCell(cellIndex)) {
-      this.grid[cellIndex] = shopId;
-      return true;
-    }
-
-    return false;
+  // -------- 永続化 --------
+  getData() {
+    return {
+      grid: this.grid,
+      selectedShopId: this.selectedShopId,
+    };
   },
 
-  /**
-   * グリッドから店舗を取り外す
-   * @param {number} shopId
-   * @returns {boolean} 成功したか
-   */
-  removeShop(shopId) {
-    const index = this.findPlacedShop(shopId);
-    if (index !== -1) {
-      this.grid[index] = null;
-      return true;
+  load(data) {
+    if (!data) return;
+    if (Array.isArray(data.grid) && data.grid.length === 9) {
+      this.grid = data.grid.slice();
     }
-    return false;
+    this.selectedShopId = data.selectedShopId ?? null;
   },
 
-  /**
-   * マップをクリア
-   */
-  clearMap() {
-    if (confirm('マップをクリアしてもよろしいですか？')) {
-      this.grid = new Array(9).fill(null);
-      this.selectedShopId = null;
-      this.render();
-      gameState.save();
-    }
-  },
-
-  // ========================================
-  // イベントリスナー設定
-  // ========================================
-
-  setupEventListeners() {
-    const mapGrid = document.getElementById('mapGrid');
-    if (!mapGrid) return;
-
-    // グリッドセルのクリックイベント
-    mapGrid.addEventListener('click', (e) => {
-      const cell = e.target.closest('.map-cell');
-      if (!cell) return;
-
-      const cellIndex = parseInt(cell.dataset.index);
-      this.handleCellClick(cellIndex);
-    });
-
-    // グリッドセルのドラッグオーバーイベント
-    mapGrid.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-    });
-
-    // グリッドセルのドロップイベント
-    mapGrid.addEventListener('drop', (e) => {
-      e.preventDefault();
-      const cell = e.target.closest('.map-cell');
-      if (!cell) return;
-
-      const cellIndex = parseInt(cell.dataset.index);
-      if (this.draggedShopId !== null) {
-        this.placeShop(this.draggedShopId, cellIndex);
-        this.draggedShopId = null;
-        this.render();
-        gameState.save();
-      }
-    });
-
-    // 左パネルの店舗のドラッグイベント
-    const availableShops = document.getElementById('availableShops');
-    if (availableShops) {
-      availableShops.addEventListener('dragstart', (e) => {
-        const shopItem = e.target.closest('.available-shop-item');
-        if (!shopItem) return;
-
-        const shopId = parseInt(shopItem.dataset.shopId);
-        this.draggedShopId = shopId;
-        e.dataTransfer.effectAllowed = 'move';
-      });
-
-      availableShops.addEventListener('dragend', () => {
-        this.draggedShopId = null;
-      });
-    }
-  },
-
-  // ========================================
-  // ユーザー操作
-  // ========================================
-
-  /**
-   * グリッドセルをクリック
-   * @param {number} cellIndex
-   */
-  handleCellClick(cellIndex) {
-    // 既に配置されている店舗をクリック → 取り外す
-    if (!this.isEmptyCell(cellIndex)) {
-      const shopId = this.grid[cellIndex];
-      this.removeShop(shopId);
-      this.selectedShopId = null;
-      this.render();
-      gameState.save();
-      return;
-    }
-
-    // 店舗が選択されていない場合は何もしない
-    if (this.selectedShopId === null) {
-      return;
-    }
-
-    // 選択中の店舗を配置
-    this.placeShop(this.selectedShopId, cellIndex);
-    this.selectedShopId = null;
-    this.render();
-    gameState.save();
-  },
-
-  /**
-   * 配置可能な店舗を選択（クリック配置用）
-   * @param {number} shopId
-   */
-  selectShop(shopId) {
-    // 既に選択されている場合は選択解除
-    if (this.selectedShopId === shopId) {
-      this.selectedShopId = null;
-    } else {
-      this.selectedShopId = shopId;
-    }
-    this.renderAvailableShops();
-  },
-
-  /**
-   * 配置可能な店舗を削除
-   * @param {number} shopId
-   */
-  removeAvailableShop(shopId) {
-    this.removeShop(shopId);
-    this.selectedShopId = null;
-    this.render();
-    gameState.save();
-  },
-
-  // ========================================
-  // レンダリング
-  // ========================================
-
-  /**
-   * マップ全体をレンダリング
-   */
+  // -------- 描画 --------
   render() {
-    this.renderGrid();
-    this.renderAvailableShops();
-  },
+    const gridEl = document.getElementById('mapGrid');
+    if (!gridEl) return;
 
-  /**
-   * マップグリッドをレンダリング
-   */
-  renderGrid() {
-    const mapGrid = document.getElementById('mapGrid');
-    if (!mapGrid) return;
+    gridEl.innerHTML = '';
 
-    mapGrid.innerHTML = '';
-
-    this.grid.forEach((shopId, index) => {
-      const coords = this.getCoordsFromIndex(index);
+    for (let i = 0; i < 9; i++) {
       const cell = document.createElement('div');
       cell.className = 'map-cell';
-      cell.dataset.index = index;
+      cell.dataset.index = i;
 
-      // 中央マスにマーク
-      if (this.isCenterCell(coords.x, coords.y)) {
-        cell.classList.add('map-cell-center');
+      const { x, y } = this.getCoordsFromIndex(i);
+      if (this.isCenterCell(x, y)) {
+        cell.classList.add('center-cell');
       }
 
-      // セル内容
-      if (shopId === null) {
-        // 空きマス
-        cell.innerHTML = `
-          <div class="cell-empty">
-            <span class="cell-coords">(${coords.x},${coords.y})</span>
-            ${this.isCenterCell(coords.x, coords.y) ? '<span class="cell-center-mark">⭐</span>' : ''}
-          </div>
-        `;
-      } else {
-        // 配置済み店舗
+      const shopId = this.grid[i];
+      if (shopId) {
         const shop = gameState.shops.find((s) => s.id === shopId);
         if (shop) {
-          const income = gameState.getShopIncome(shop);
-          const centerBonus = this.isCenterCell(coords.x, coords.y) ? 1.2 : 1;
-          const bonusIncome = Math.floor(income * centerBonus);
-
+          cell.classList.add('occupied');
           cell.innerHTML = `
-            <div class="cell-shop">
-              <div class="cell-shop-name">${shop.name}</div>
-              <div class="cell-shop-level">Lv${shop.level}</div>
-              <div class="cell-shop-income">
-                ${income}円<span class="cell-shop-income-bonus">${centerBonus > 1 ? `→${bonusIncome}円` : ''}</span>
-              </div>
-              <div class="cell-coords">(${coords.x},${coords.y})</div>
+            <div class="placed-shop">
+              <div class="placed-shop-name">${shop.name}</div>
+              <div class="placed-shop-income">+${gameState.getShopIncome(shop)}円/秒</div>
             </div>
           `;
-          cell.classList.add('map-cell-occupied');
-
-          // 長押しで取り外す機能
-          cell.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            this.removeAvailableShop(shopId);
-          });
         }
+      } else {
+        cell.classList.add('empty');
+        cell.innerHTML = `<span class="cell-placeholder">空き</span>`;
       }
 
-      mapGrid.appendChild(cell);
-    });
+      cell.addEventListener('click', () => this.onCellClick(i));
+      gridEl.appendChild(cell);
+    }
   },
 
-  /**
-   * 配置可能な店舗リストをレンダリング
-   */
   renderAvailableShops() {
-    const availableShops = document.getElementById('availableShops');
-    if (!availableShops) return;
+    const listEl = document.getElementById('availableShops');
+    if (!listEl) return;
 
-    availableShops.innerHTML = '';
+    listEl.innerHTML = '';
 
-    const ownedShops = gameState.shops.filter((shop) => shop.owned);
+    const ownedNotPlaced = gameState.shops.filter(
+      (shop) => shop.owned && this.findPlacedShop(shop.id) === -1
+    );
 
-    if (ownedShops.length === 0) {
-      availableShops.innerHTML = '<p class="no-shops-message">購入済みの店舗がありません</p>';
+    if (ownedNotPlaced.length === 0) {
+      listEl.innerHTML = `<p class="empty-text">配置可能な店舗はありません</p>`;
       return;
     }
 
-    ownedShops.forEach((shop) => {
-      const isPlaced = this.findPlacedShop(shop.id) !== -1;
-      const isSelected = this.selectedShopId === shop.id;
-      const income = gameState.getShopIncome(shop);
+    ownedNotPlaced.forEach((shop) => {
+      const btn = document.createElement('button');
+      btn.className = 'available-shop-btn';
+      if (this.selectedShopId === shop.id) btn.classList.add('selected');
 
-      const shopItem = document.createElement('div');
-      shopItem.className = `available-shop-item ${isPlaced ? 'placed' : ''} ${isSelected ? 'selected' : ''}`;
-      shopItem.dataset.shopId = shop.id;
-      shopItem.draggable = true;
-
-      const statusText = isPlaced ? '✓ 配置済み' : '○ 未配置';
-
-      shopItem.innerHTML = `
-        <div class="shop-item-header">
-          <span class="shop-item-name">${shop.name}</span>
-          <span class="shop-item-status">${statusText}</span>
-        </div>
-        <div class="shop-item-details">
-          <span>Lv${shop.level}</span>
-          <span>${income}円/秒</span>
-        </div>
-        <button class="btn-remove-shop" onclick="event.stopPropagation(); mapModule.removeAvailableShop(${shop.id})">
-          🗑️ 削除
-        </button>
-        <div class="shop-item-hint">
-          ${isPlaced ? 'ドラッグで移動 / クリックで選択解除' : 'ドラッグで配置 / クリックで選択'}
-        </div>
+      btn.innerHTML = `
+        <span>${shop.name}</span>
+        <small>${gameState.getShopIncome(shop)}円/秒</small>
       `;
-
-      // クリック時の選択・解除
-      shopItem.addEventListener('click', (e) => {
-        if (!e.target.closest('.btn-remove-shop')) {
-          this.selectShop(shop.id);
-        }
+      btn.addEventListener('click', () => {
+        this.selectedShopId = shop.id;
+        this.renderAvailableShops();
       });
 
-      availableShops.appendChild(shopItem);
+      listEl.appendChild(btn);
     });
+  },
+
+  // -------- 操作 --------
+  onCellClick(index) {
+    const existing = this.grid[index];
+
+    // 置かれている店舗をクリックしたら撤去
+    if (existing) {
+      this.grid[index] = null;
+      this.saveAndRefresh();
+      return;
+    }
+
+    // 空きセルに選択店舗を配置
+    if (this.selectedShopId == null) return;
+
+    // 念のため重複防止
+    const oldIndex = this.findPlacedShop(this.selectedShopId);
+    if (oldIndex !== -1) {
+      this.grid[oldIndex] = null;
+    }
+
+    this.grid[index] = this.selectedShopId;
+    this.selectedShopId = null;
+    this.saveAndRefresh();
+  },
+
+  clearMap() {
+    this.grid = new Array(9).fill(null);
+    this.selectedShopId = null;
+    this.saveAndRefresh();
+  },
+
+  saveAndRefresh() {
+    gameState.save();
+    this.render();
+    this.renderAvailableShops();
+    gameState.render(); // 収入表示更新
   },
 };
